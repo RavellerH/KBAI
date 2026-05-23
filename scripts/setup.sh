@@ -146,6 +146,11 @@ envsubst '${DOMAIN} ${HERMES_API_KEY}' < "${NGINX_TEMPLATE}" > "${NGINX_CONF}"
 ln -sf "${NGINX_CONF}" /etc/nginx/sites-enabled/kbai-hermes
 rm -f /etc/nginx/sites-enabled/default   # remove default placeholder
 
+# AnythingLLM on port 3002
+NGINX_ALLM_CONF="/etc/nginx/sites-available/kbai-anythingllm"
+envsubst '${DOMAIN}' < "${INSTALL_DIR}/nginx/kbai-anythingllm.conf.template" > "${NGINX_ALLM_CONF}"
+ln -sf "${NGINX_ALLM_CONF}" /etc/nginx/sites-enabled/kbai-anythingllm
+
 nginx -t && systemctl reload nginx
 log "Nginx configured for domain: ${DOMAIN}"
 
@@ -184,12 +189,13 @@ sep
 API_KEY_VALUE=$(grep '^HERMES_API_KEY=' "${ENV_FILE}" | cut -d= -f2)
 log "Setup complete!"
 echo ""
-echo -e "  Open WebUI:  ${CYAN}http://${DOMAIN}/${NC}"
-echo -e "  Ollama API:  ${CYAN}http://${DOMAIN}/api/${NC}"
-echo -e "  API key:     ${YELLOW}${API_KEY_VALUE}${NC}"
+echo -e "  Open WebUI:      ${CYAN}http://${DOMAIN}/${NC}"
+echo -e "  AnythingLLM RAG: ${CYAN}http://${DOMAIN}:3002/${NC}"
+echo -e "  Ollama API:      ${CYAN}http://${DOMAIN}/ollama/${NC}"
+echo -e "  API key:         ${YELLOW}${API_KEY_VALUE}${NC}"
 echo ""
 echo -e "  Example API call:"
-echo -e "  ${CYAN}curl http://${DOMAIN}/api/generate \\"
+echo -e "  ${CYAN}curl http://${DOMAIN}/ollama/api/generate \\"
 echo -e "    -H 'Authorization: Bearer ${API_KEY_VALUE}' \\"
 echo -e "    -d '{\"model\":\"hf.co/NousResearch/Hermes-3-Llama-3.1-8B-GGUF:Q4_K_M\",\"prompt\":\"Hello\"}' ${NC}"
 echo ""

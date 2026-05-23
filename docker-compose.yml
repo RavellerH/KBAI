@@ -24,6 +24,22 @@ services:
       - open_webui_data:/app/backend/data
     restart: unless-stopped
 
+  anythingllm:
+    image: mintplexlabs/anythingllm:latest
+    container_name: kbai-anythingllm
+    ports:
+      - "127.0.0.1:8081:3001"
+    volumes:
+      - anythingllm_data:/app/server/storage
+      - obsidian_vault:/obsidian:ro
+    environment:
+      - STORAGE_DIR=/app/server/storage
+    cap_add:
+      - SYS_ADMIN
+    restart: unless-stopped
+
 volumes:
   ollama_data:
   open_webui_data:
+  anythingllm_data:
+  obsidian_vault:
