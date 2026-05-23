@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-shot installer for KBAI Hermes Agent
 # Usage: curl -fsSL <url>/install.sh | bash
-# Or:    curl -fsSL <url>/install.sh | DOMAIN=178.18.241.124 bash
+# Or:    curl -fsSL <url>/install.sh | DOMAIN=your-vps-ip bash
 
 set -euo pipefail
 

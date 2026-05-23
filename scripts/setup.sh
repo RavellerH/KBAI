@@ -6,7 +6,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/ravellerh/kbai/claude/exciting-dirac-1j88g/scripts/install.sh | bash
 #
 # Or with DOMAIN pre-set:
-#   DOMAIN=178.18.241.124 bash setup.sh
+#   DOMAIN=your-vps-ip bash setup.sh
 
 set -euo pipefail
 
