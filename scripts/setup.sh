@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
 # setup.sh — Installs and configures the KBAI Hermes Agent on Ubuntu/Debian VPS
 # Installs: Docker, Docker Compose plugin, Nginx, systemd service
-# Run as root or with sudo: sudo bash setup.sh
+#
+# Non-interactive usage (no prompts):
+#   curl -fsSL https://raw.githubusercontent.com/ravellerh/kbai/claude/exciting-dirac-1j88g/scripts/install.sh | bash
+#
+# Or with DOMAIN pre-set:
+#   DOMAIN=178.18.241.124 bash setup.sh
 
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_DIR="/opt/kbai"
+# When run via curl/pipe, BASH_SOURCE[0] is empty — fall back to INSTALL_DIR
+_src="${BASH_SOURCE[0]:-}"
+if [[ -n "$_src" && "$_src" != "bash" ]]; then
+    REPO_DIR="$(cd "$(dirname "$_src")/.." && pwd)"
+else
+    REPO_DIR="${INSTALL_DIR}"
+fi
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 log()  { echo -e "${GREEN}[kbai]${NC} $*"; }
@@ -52,10 +63,16 @@ if [[ ! -f "${ENV_FILE}" ]]; then
     sed -i "s|^HERMES_API_KEY=.*|HERMES_API_KEY=${API_KEY}|" "${ENV_FILE}"
 
     warn ".env created at ${ENV_FILE} with generated secrets."
-    warn "Edit DOMAIN in ${ENV_FILE} before continuing."
-    echo ""
-    read -rp "Enter your VPS public IP or domain name: " DOMAIN_INPUT
-    [[ -z "${DOMAIN_INPUT}" ]] && die "DOMAIN cannot be empty."
+
+    # Use DOMAIN env var if set, otherwise prompt
+    if [[ -n "${DOMAIN:-}" ]]; then
+        DOMAIN_INPUT="${DOMAIN}"
+        log "Using DOMAIN from environment: ${DOMAIN_INPUT}"
+    else
+        echo ""
+        read -rp "Enter your VPS public IP or domain name: " DOMAIN_INPUT
+        [[ -z "${DOMAIN_INPUT}" ]] && die "DOMAIN cannot be empty."
+    fi
     sed -i "s|^DOMAIN=.*|DOMAIN=${DOMAIN_INPUT}|" "${ENV_FILE}"
     log "DOMAIN set to: ${DOMAIN_INPUT}"
 fi
