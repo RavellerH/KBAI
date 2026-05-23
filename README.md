@@ -118,7 +118,7 @@ bash /opt/kbai/scripts/pull-model.sh
 | Endpoint | URL | Auth |
 |---|---|---|
 | Open WebUI (chat) | `http://your-domain/` | Login created on first visit |
-| Ollama REST API | `http://your-domain/api/` | Bearer token |
+| Ollama REST API | `http://your-domain/ollama/` | Bearer token |
 
 The Bearer token is auto-generated during setup and saved to `/opt/kbai/.env`.
 
@@ -134,7 +134,7 @@ grep HERMES_API_KEY /opt/kbai/.env
 ### Generate (streaming)
 
 ```bash
-curl http://your-domain/api/generate \
+curl http://your-domain/ollama/api/generate \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -147,7 +147,7 @@ curl http://your-domain/api/generate \
 ### Chat (OpenAI-compatible format)
 
 ```bash
-curl http://your-domain/api/chat \
+curl http://your-domain/ollama/api/chat \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -162,7 +162,7 @@ curl http://your-domain/api/chat \
 ### List available models
 
 ```bash
-curl http://your-domain/api/tags \
+curl http://your-domain/ollama/api/tags \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 

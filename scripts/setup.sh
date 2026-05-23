@@ -137,6 +137,9 @@ log "Configuring Nginx..."
 NGINX_CONF="/etc/nginx/sites-available/kbai-hermes"
 NGINX_TEMPLATE="${INSTALL_DIR}/nginx/kbai-hermes.conf.template"
 
+# map_hash_bucket_size must live in the http context, separate from the site config
+echo 'map_hash_bucket_size 128;' > /etc/nginx/conf.d/map-hash.conf
+
 export DOMAIN HERMES_API_KEY
 envsubst '${DOMAIN} ${HERMES_API_KEY}' < "${NGINX_TEMPLATE}" > "${NGINX_CONF}"
 
