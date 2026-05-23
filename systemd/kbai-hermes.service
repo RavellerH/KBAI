@@ -1,5 +1,5 @@
 [Unit]
-Description=KBAI Hermes Agent (Ollama + Open WebUI)
+Description=KBAI — Self-hosted Knowledge Base AI (Ollama + Open WebUI + AnythingLLM)
 Documentation=https://github.com/ravellerh/kbai
 Requires=docker.service
 After=docker.service network-online.target

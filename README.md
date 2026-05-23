@@ -1,8 +1,45 @@
-# Self-hosted Hermes LLM on VPS
+# KBAI — Self-hosted Knowledge Base AI
 
-Run [NousResearch Hermes-3-Llama-3.1-8B](https://huggingface.co/NousResearch/Hermes-3-Llama-3.1-8B) on your own VPS with a chat UI and a protected REST API — no cloud subscriptions, no data leaving your server.
+A fully self-hosted, open-source AI stack for your personal knowledge base.
+Run the **Hermes-3-Llama-3.1-8B** language model on your own VPS with a chat interface,
+a RAG engine that can search your Obsidian notes and PDFs, and a protected REST API —
+no cloud subscriptions required, no data leaving your server.
 
-**Stack:** Ollama · Open WebUI · Nginx · Docker Compose · systemd
+---
+
+## What's Included
+
+| Service | Purpose | Access |
+|---|---|---|
+| **Ollama** | Serves the Hermes LLM locally | Internal only |
+| **Open WebUI** | Chat UI for the Hermes model | `http://your-ip/` |
+| **AnythingLLM** | RAG — chat with your notes & PDFs | `http://your-ip:3002/` |
+| **Nginx** | Reverse proxy + Bearer token API auth | Port 80 |
+| **systemd** | Auto-start all services on boot | — |
+
+**Model:** [NousResearch Hermes-3-Llama-3.1-8B](https://huggingface.co/NousResearch/Hermes-3-Llama-3.1-8B) — Q4_K_M quantization (~5.5 GB, runs on CPU)
+
+---
+
+## Architecture
+
+```
+                        ┌─────────────────────────────────┐
+                        │         YOUR VPS                 │
+                        │                                  │
+  Browser / API  ──────▶│  Nginx (port 80)                │
+                        │   ├── /         → Open WebUI    │
+                        │   └── /ollama/  → Ollama API    │
+                        │                                  │
+  Browser        ──────▶│  Nginx (port 3002)              │
+                        │   └── /        → AnythingLLM   │
+                        │                                  │
+                        │  Docker Compose                  │
+                        │   ├── kbai-ollama      :11434   │
+                        │   ├── kbai-open-webui  :3001    │
+                        │   └── kbai-anythingllm :8081    │
+                        └─────────────────────────────────┘
+```
 
 ---
 
@@ -10,13 +47,13 @@ Run [NousResearch Hermes-3-Llama-3.1-8B](https://huggingface.co/NousResearch/Her
 
 | Resource | Minimum | Recommended |
 |---|---|---|
-| RAM | 8 GB | 16 GB |
+| RAM | 8 GB + 4 GB swap | 16 GB |
 | Disk | 20 GB free | 40 GB free |
 | OS | Ubuntu 22.04 / 24.04 | Ubuntu 24.04 LTS |
 | CPU | 4 cores | 8+ cores |
-| GPU | not required | NVIDIA (auto-detected) |
+| GPU | Not required | NVIDIA (auto-detected) |
 
-> **Model size:** Q4_K_M quantization — ~5.5 GB download, ~6 GB RAM at runtime.
+> The Q4_K_M model uses ~5.5 GB RAM at runtime. A 4 GB swap file is strongly recommended on 8 GB VPS instances.
 
 ---
 
@@ -32,30 +69,31 @@ DOMAIN=your-ip-or-domain bash /opt/kbai/scripts/setup.sh
 Replace `your-ip-or-domain` with your VPS public IP or a domain name pointing to it.
 
 The script will:
-1. Detect CPU or NVIDIA GPU
-2. Install Docker, Nginx, and dependencies
-3. Generate random API keys
-4. Start Ollama + Open WebUI via Docker Compose
-5. Configure Nginx reverse proxy
-6. Pull the Hermes model (~5.5 GB)
+1. Add 4 GB swap (prevents OOM kills on 8 GB VPS)
+2. Fix any broken dpkg state
+3. Install Docker, Nginx, and all dependencies
+4. Generate random API keys and secrets
+5. Pull and start Ollama + Open WebUI + AnythingLLM
+6. Configure Nginx reverse proxy with Bearer token auth
 7. Enable auto-start on boot via systemd
+8. Download the Hermes-3-Llama-3.1-8B model (~5.5 GB)
 
-**When finished, the script prints your access URLs and API key — save them.**
+**When finished, the script prints your URLs and API key — save them.**
 
 ---
 
 ## Manual Install (fallback)
 
-Use this if `git clone` or the setup script fails partway through.
+Use this if the setup script fails partway through.
 
-### 1. Fix any broken packages
+### 1. Fix broken packages (if needed)
 
 ```bash
 apt-get install -y --fix-broken
 dpkg --configure -a
 ```
 
-### 2. Add swap (required if VPS has ≤ 8 GB RAM)
+### 2. Add 4 GB swap
 
 ```bash
 fallocate -l 4G /swapfile
@@ -86,52 +124,82 @@ apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 systemctl enable --now docker
 ```
 
-### 5. Configure and start
+### 5. Start the stack
 
 ```bash
-# Set your domain/IP
+cd /opt/kbai
+
+# Generate secrets
+WEBUI_SECRET=$(openssl rand -hex 32)
+API_KEY=$(openssl rand -hex 24)
 DOMAIN=your-ip-or-domain
-HERMES_API_KEY=$(grep '^HERMES_API_KEY=' /opt/kbai/.env | cut -d= -f2)
-export DOMAIN HERMES_API_KEY
+
+# Write .env
+cat > /opt/kbai/.env <<EOF
+DOMAIN=$DOMAIN
+WEBUI_SECRET_KEY=$WEBUI_SECRET
+HERMES_API_KEY=$API_KEY
+EOF
 
 # Nginx
-envsubst '${DOMAIN} ${HERMES_API_KEY}' < /opt/kbai/nginx/kbai-hermes.conf.template \
+echo 'map_hash_bucket_size 128;' > /etc/nginx/conf.d/map-hash.conf
+export DOMAIN HERMES_API_KEY=$API_KEY
+envsubst '${DOMAIN} ${HERMES_API_KEY}' < nginx/kbai-hermes.conf.template \
   > /etc/nginx/sites-available/kbai-hermes
+envsubst '${DOMAIN}' < nginx/kbai-anythingllm.conf.template \
+  > /etc/nginx/sites-available/kbai-anythingllm
 ln -sf /etc/nginx/sites-available/kbai-hermes /etc/nginx/sites-enabled/kbai-hermes
+ln -sf /etc/nginx/sites-available/kbai-anythingllm /etc/nginx/sites-enabled/kbai-anythingllm
 rm -f /etc/nginx/sites-enabled/default
-nginx -t && systemctl reload nginx
+nginx -t && systemctl start nginx && systemctl enable nginx
 
-# Systemd
-cp /opt/kbai/systemd/kbai-hermes.service /etc/systemd/system/kbai-hermes.service
-systemctl daemon-reload && systemctl enable kbai-hermes
+# Start containers
+docker compose up -d
 
-# Start containers and pull model
-cd /opt/kbai && docker compose up -d
-sleep 15
-bash /opt/kbai/scripts/pull-model.sh
+# Wait and pull models
+sleep 20
+docker exec kbai-ollama ollama pull hf.co/NousResearch/Hermes-3-Llama-3.1-8B-GGUF:Q4_K_M
+docker exec kbai-ollama ollama pull nomic-embed-text
 ```
 
 ---
 
-## What You Get
+## Initial Setup
 
-| Endpoint | URL | Auth |
-|---|---|---|
-| Open WebUI (chat) | `http://your-domain/` | Login created on first visit |
-| Ollama REST API | `http://your-domain/ollama/` | Bearer token |
+### Open WebUI (Chat with Hermes)
 
-The Bearer token is auto-generated during setup and saved to `/opt/kbai/.env`.
+1. Open `http://your-ip/`
+2. Create your admin account on first visit
+3. The Hermes model is pre-loaded — start chatting
+
+### AnythingLLM (RAG — Chat with your knowledge base)
+
+1. Open `http://your-ip:3002/`
+2. Create your admin account
+3. Go to **Settings → LLM Provider**:
+   - Provider: `Ollama`
+   - Base URL: `http://kbai-ollama:11434`
+   - Model: `hf.co/NousResearch/Hermes-3-Llama-3.1-8B-GGUF:Q4_K_M`
+4. Go to **Settings → Embedding**:
+   - Provider: `Ollama`
+   - Base URL: `http://kbai-ollama:11434`
+   - Model: `nomic-embed-text`
+5. Create **Workspaces** for each domain (e.g. `AI Research`, `Crypto`, `Creative Writing`)
+6. Upload your PDFs, Markdown notes, and documents into each workspace
+7. Chat with your documents — AnythingLLM retrieves relevant context using RAG
+
+---
+
+## Ollama API
+
+The Ollama REST API is exposed at `/ollama/` and requires a Bearer token.
 
 ```bash
-# View your API key at any time
+# View your API key
 grep HERMES_API_KEY /opt/kbai/.env
 ```
 
----
-
-## API Usage Examples
-
-### Generate (streaming)
+### Generate (single prompt)
 
 ```bash
 curl http://your-domain/ollama/api/generate \
@@ -139,12 +207,12 @@ curl http://your-domain/ollama/api/generate \
   -H "Content-Type: application/json" \
   -d '{
     "model": "hf.co/NousResearch/Hermes-3-Llama-3.1-8B-GGUF:Q4_K_M",
-    "prompt": "Explain quantum entanglement in simple terms.",
+    "prompt": "Explain attention mechanisms in transformers.",
     "stream": false
   }'
 ```
 
-### Chat (OpenAI-compatible format)
+### Chat (multi-turn)
 
 ```bash
 curl http://your-domain/ollama/api/chat \
@@ -153,13 +221,13 @@ curl http://your-domain/ollama/api/chat \
   -d '{
     "model": "hf.co/NousResearch/Hermes-3-Llama-3.1-8B-GGUF:Q4_K_M",
     "messages": [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": "Hello!"}
+      {"role": "system", "content": "You are a helpful research assistant."},
+      {"role": "user", "content": "What is a transformer?"}
     ]
   }'
 ```
 
-### List available models
+### List models
 
 ```bash
 curl http://your-domain/ollama/api/tags \
@@ -168,50 +236,62 @@ curl http://your-domain/ollama/api/tags \
 
 ---
 
+## Pulling Additional Models
+
+```bash
+# Pull any model from Ollama library or HuggingFace
+docker exec kbai-ollama ollama pull mistral
+docker exec kbai-ollama ollama pull llama3.2
+
+# List all loaded models
+docker exec kbai-ollama ollama list
+```
+
+---
+
 ## TLS / HTTPS
 
-After setup, add a free TLS certificate with Certbot. You need a domain name pointing to your VPS (not just an IP).
+Requires a domain name (not just an IP) pointing to your VPS.
 
 ```bash
 apt-get install -y certbot python3-certbot-nginx
 certbot --nginx -d your-domain.com
 ```
 
-Certbot automatically edits the Nginx config and sets up auto-renewal.
+Certbot automatically configures Nginx and sets up auto-renewal.
 
 ---
 
-## Managing the Service
+## Service Management
 
 ```bash
-# Check status
-systemctl status kbai-hermes
+# Status of all containers
+docker ps
 
-# Stop
+# Restart everything
+systemctl restart kbai-hermes
+
+# Stop / start
 systemctl stop kbai-hermes
-
-# Start
 systemctl start kbai-hermes
 
 # View logs
 docker logs kbai-ollama
 docker logs kbai-open-webui
+docker logs kbai-anythingllm
 
-# Pull a different model
-docker exec kbai-ollama ollama pull <model-name>
-
-# List loaded models
-docker exec kbai-ollama ollama list
+# Rebuild and restart a single service
+cd /opt/kbai && docker compose up -d --force-recreate open-webui
 ```
 
 ---
 
 ## GPU Support (NVIDIA)
 
-The setup script auto-detects an NVIDIA GPU. If you add a GPU after initial setup, reinstall the NVIDIA Container Toolkit and restart with the GPU compose override:
+The setup script auto-detects an NVIDIA GPU. To add GPU support after initial install:
 
 ```bash
-# Install toolkit
+# Install NVIDIA Container Toolkit
 curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor \
   -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
 curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
@@ -221,7 +301,7 @@ apt-get update && apt-get install -y nvidia-container-toolkit
 nvidia-ctk runtime configure --runtime=docker
 systemctl restart docker
 
-# Restart with GPU support
+# Restart Ollama with GPU support
 cd /opt/kbai
 docker compose down
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
@@ -232,34 +312,44 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 ## File Structure
 
 ```
-├── docker-compose.yml          # Ollama + Open WebUI services
-├── docker-compose.gpu.yml      # NVIDIA GPU override
-├── .env.example                # Environment template (copy → .env)
+├── docker-compose.yml               # Ollama + Open WebUI + AnythingLLM
+├── docker-compose.gpu.yml           # NVIDIA GPU override
+├── .env.example                     # Environment template (copy → .env)
 ├── nginx/
-│   └── kbai-hermes.conf.template   # Nginx reverse proxy config
+│   ├── kbai-hermes.conf.template    # Proxy config: Open WebUI + Ollama API
+│   └── kbai-anythingllm.conf.template  # Proxy config: AnythingLLM on :3002
 ├── systemd/
-│   └── kbai-hermes.service         # Systemd unit for auto-start
+│   └── kbai-hermes.service          # Systemd unit for auto-start
 └── scripts/
-    ├── setup.sh                # Main installer
-    ├── install.sh              # One-liner bootstrap (downloads setup.sh)
-    └── pull-model.sh           # Pull Hermes model into Ollama
+    ├── setup.sh                     # Main installer
+    ├── install.sh                   # Bootstrap (downloads setup.sh)
+    └── pull-model.sh                # Pull Hermes model into Ollama
 ```
 
 ---
 
 ## Troubleshooting
 
-**apt-get gets killed during install**
-Add swap before running setup — see step 2 of the manual install above.
+**apt-get gets killed (OOM) during install**
+Add swap before running setup — see step 2 of manual install above. 8 GB RAM with no swap is not enough to install Docker packages.
 
 **`dpkg --configure -a` fails with dependency errors**
-Run `apt-get install -y --fix-broken` first, then retry `dpkg --configure -a`.
+Run `apt-get install -y --fix-broken` first, then retry.
 
-**Nginx fails to start**
-Check config syntax: `nginx -t`. Ensure port 80 is not already in use: `ss -tlnp | grep :80`.
+**Nginx fails with `map_hash_bucket_size` error**
+Ensure `/etc/nginx/conf.d/map-hash.conf` exists: `echo 'map_hash_bucket_size 128;' > /etc/nginx/conf.d/map-hash.conf`
+
+**Open WebUI shows "Backend Required" error**
+This happens when Nginx routes `/api/` to Ollama instead of Open WebUI. The current config routes `/ollama/` to Ollama and all other traffic to Open WebUI — this is correct. If you see this error, check that your Nginx config matches `nginx/kbai-hermes.conf.template`.
 
 **Ollama not responding**
-Check container logs: `docker logs kbai-ollama`. It may still be loading — wait 30 seconds and retry.
+Check container logs: `docker logs kbai-ollama`. It may still be initializing — wait 30 seconds and retry.
 
-**Model pull fails**
-Ensure the container is running (`docker ps`) and you have enough disk space (`df -h`).
+**AnythingLLM can't connect to Ollama**
+Use `http://kbai-ollama:11434` as the base URL inside AnythingLLM settings (not localhost — they communicate over the Docker internal network).
+
+**Model pull fails / runs out of disk**
+Check disk space: `df -h`. The Hermes model needs ~6 GB free. The embedding model (`nomic-embed-text`) needs an additional ~270 MB.
+
+**Port 3002 not reachable**
+Check nginx is listening: `ss -tlnp | grep 3002`. If not, verify `/etc/nginx/sites-enabled/kbai-anythingllm` exists and reload nginx.
