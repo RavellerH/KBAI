@@ -1,6 +1,9 @@
 import os, logging, httpx
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler,
+    CallbackQueryHandler, filters, ContextTypes
+)
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -14,14 +17,20 @@ OLLAMA_URL         = os.getenv("OLLAMA_BASE_URL", "http://kbai-ollama:11434")
 LOCAL_MODEL        = os.getenv("OLLAMA_MODEL", "hf.co/NousResearch/Hermes-3-Llama-3.1-8B-GGUF:Q4_K_M")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 SYSTEM             = os.getenv("SYSTEM_PROMPT", (
-    "You are Hermes, a knowledgeable and direct AI assistant. "
+    "You are a knowledgeable and direct AI assistant. "
     "Answer concisely. Use markdown formatting when helpful."
 ))
 
-CLOUD_MODELS = {
-    "claude": "anthropic/claude-haiku-4-5",
-    "gpt4o":  "openai/gpt-4o-mini",
-    "gemini": "google/gemini-flash-1.5",
+# (openrouter_model_id, display_name, est_cost)
+CLOUD_MODELS: dict[str, tuple[str, str, str]] = {
+    "gemini":    ("google/gemini-flash-1.5",                 "Gemini Flash 1.5",   "~$0.0001/msg"),
+    "deepseek":  ("deepseek/deepseek-chat",                  "DeepSeek V3",        "~$0.0003/msg"),
+    "qwen":      ("qwen/qwen-2.5-72b-instruct",              "Qwen 2.5 72B",       "~$0.0005/msg"),
+    "claude":    ("anthropic/claude-haiku-4-5",              "Claude Haiku 4.5",   "~$0.001/msg"),
+    "gpt4o":     ("openai/gpt-4o-mini",                      "GPT-4o mini",        "~$0.001/msg"),
+    "nemotron":  ("nvidia/llama-3.1-nemotron-70b-instruct",  "Nemotron 70B",       "~$0.001/msg"),
+    "llama":     ("meta-llama/llama-3.3-70b-instruct",       "Llama 3.3 70B",      "~$0.0003/msg"),
+    "mistral":   ("mistralai/mistral-large",                 "Mistral Large",      "~$0.002/msg"),
 }
 
 histories:    dict[int, list[dict]] = {}
@@ -29,6 +38,19 @@ active_model: dict[int, str]        = {}
 
 def allowed(chat_id: int) -> bool:
     return not ALLOWED_ID or str(chat_id) == ALLOWED_ID
+
+def model_keyboard(current: str) -> InlineKeyboardMarkup:
+    def btn(key: str, label: str) -> InlineKeyboardButton:
+        text = f"✅ {label}" if key == current else label
+        return InlineKeyboardButton(text, callback_data=f"model:{key}")
+
+    return InlineKeyboardMarkup([
+        [btn("gemini",   "Gemini Flash"),  btn("deepseek", "DeepSeek V3")],
+        [btn("qwen",     "Qwen 2.5 72B"),  btn("llama",    "Llama 3.3 70B")],
+        [btn("claude",   "Claude Haiku"),  btn("gpt4o",    "GPT-4o mini")],
+        [btn("nemotron", "Nemotron 70B"),  btn("mistral",  "Mistral Large")],
+        [btn("local",    "🏠 Local Hermes (private, slow)")],
+    ])
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -53,13 +75,13 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "🤖 *Hermes is ready.*\n\n"
-        f"Current model: `local` \\(Hermes on VPS\\)\n"
+        f"Current model: `local` (Hermes on VPS)\n"
         f"{cloud_status}\n\n"
-        "Send me anything to chat\\.\n\n"
+        "Send me anything to chat.\n\n"
         "/model — Switch AI model\n"
         "/reset — Clear conversation history\n"
         "/help — Show this message",
-        parse_mode="MarkdownV2"
+        parse_mode="Markdown"
     )
 
 async def cmd_reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -85,43 +107,35 @@ async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     current = active_model.get(chat_id, "local")
-
-    def m(key):
-        return "▶️" if current == key else "·"
-
     await update.message.reply_text(
-        "Choose a model:\n\n"
-        f"{m('local')} /model_local — Hermes 8B (VPS, private, slow)\n"
-        f"{m('claude')} /model_claude — Claude Haiku (fast, ~$0.001/msg)\n"
-        f"{m('gpt4o')} /model_gpt4o — GPT-4o mini (fast, ~$0.001/msg)\n"
-        f"{m('gemini')} /model_gemini — Gemini Flash (fastest, ~$0.0001/msg)"
+        "Choose a model — tap to switch:\n_(✅ = currently active)_",
+        parse_mode="Markdown",
+        reply_markup=model_keyboard(current)
     )
 
-async def _set_model(update: Update, model_key: str):
-    chat_id = update.effective_chat.id
+async def callback_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    chat_id = query.message.chat_id
     if not allowed(chat_id):
         return
+
+    model_key = query.data.split(":")[1]
     active_model[chat_id] = model_key
     histories[chat_id] = []
-    labels = {
-        "local":  "Hermes 8B (local VPS)",
-        "claude": "Claude Haiku (OpenRouter)",
-        "gpt4o":  "GPT-4o mini (OpenRouter)",
-        "gemini": "Gemini Flash (OpenRouter)",
-    }
-    await update.message.reply_text(f"✅ Switched to {labels[model_key]}. Conversation cleared.")
 
-async def cmd_model_local(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await _set_model(update, "local")
+    if model_key == "local":
+        name = "Local Hermes (private)"
+    else:
+        name = CLOUD_MODELS[model_key][1]
 
-async def cmd_model_claude(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await _set_model(update, "claude")
-
-async def cmd_model_gpt4o(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await _set_model(update, "gpt4o")
-
-async def cmd_model_gemini(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await _set_model(update, "gemini")
+    await query.edit_message_text(
+        f"✅ Switched to *{name}*. Conversation cleared.\n\n"
+        "_(tap /model to change again)_",
+        parse_mode="Markdown",
+        reply_markup=model_keyboard(model_key)
+    )
 
 async def call_ollama(messages: list[dict]) -> str:
     async with httpx.AsyncClient(timeout=180.0) as client:
@@ -166,9 +180,9 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if model_key == "local":
             reply = await call_ollama(messages)
         else:
-            reply = await call_openrouter(messages, CLOUD_MODELS[model_key])
+            reply = await call_openrouter(messages, CLOUD_MODELS[model_key][0])
     except httpx.TimeoutException:
-        reply = "⚠️ Request timed out. Try again or switch to a cloud model with /model."
+        reply = "⚠️ Request timed out. Try again or switch model with /model."
     except Exception as e:
         logger.error(f"LLM error ({model_key}): {e}")
         reply = f"⚠️ Error: {e}"
@@ -184,14 +198,11 @@ def main():
     logger.info(f"Access: {'chat_id=' + ALLOWED_ID if ALLOWED_ID else 'OPEN'}")
 
     app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start",        cmd_start))
-    app.add_handler(CommandHandler("reset",        cmd_reset))
-    app.add_handler(CommandHandler("help",         cmd_help))
-    app.add_handler(CommandHandler("model",        cmd_model))
-    app.add_handler(CommandHandler("model_local",  cmd_model_local))
-    app.add_handler(CommandHandler("model_claude", cmd_model_claude))
-    app.add_handler(CommandHandler("model_gpt4o",  cmd_model_gpt4o))
-    app.add_handler(CommandHandler("model_gemini", cmd_model_gemini))
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("reset", cmd_reset))
+    app.add_handler(CommandHandler("help",  cmd_help))
+    app.add_handler(CommandHandler("model", cmd_model))
+    app.add_handler(CallbackQueryHandler(callback_model, pattern="^model:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.run_polling(drop_pending_updates=True)
 
