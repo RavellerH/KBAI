@@ -11,27 +11,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TOKEN              = os.environ["TELEGRAM_BOT_TOKEN"]
-ALLOWED_ID         = os.getenv("TELEGRAM_ALLOWED_CHAT_ID", "").strip()
-OLLAMA_URL         = os.getenv("OLLAMA_BASE_URL", "http://kbai-ollama:11434")
-LOCAL_MODEL        = os.getenv("OLLAMA_MODEL", "hf.co/NousResearch/Hermes-3-Llama-3.1-8B-GGUF:Q4_K_M")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-SYSTEM             = os.getenv("SYSTEM_PROMPT", (
+TOKEN               = os.environ["TELEGRAM_BOT_TOKEN"]
+ALLOWED_ID          = os.getenv("TELEGRAM_ALLOWED_CHAT_ID", "").strip()
+OLLAMA_URL          = os.getenv("OLLAMA_BASE_URL", "http://kbai-ollama:11434")
+LOCAL_MODEL         = os.getenv("OLLAMA_MODEL", "hf.co/NousResearch/Hermes-3-Llama-3.1-8B-GGUF:Q4_K_M")
+OPENROUTER_API_KEY  = os.getenv("OPENROUTER_API_KEY", "")
+ANYTHINGLLM_URL     = os.getenv("ANYTHINGLLM_URL", "http://kbai-anythingllm:3001")
+ANYTHINGLLM_API_KEY = os.getenv("ANYTHINGLLM_API_KEY", "")
+SYSTEM              = os.getenv("SYSTEM_PROMPT", (
     "You are a knowledgeable and direct AI assistant. "
     "Answer concisely. Use markdown formatting when helpful."
 ))
 
-# (openrouter_model_id, display_name, est_cost)
-CLOUD_MODELS: dict[str, tuple[str, str, str]] = {
-    "gemini":    ("google/gemini-flash-1.5",                 "Gemini Flash 1.5",   "~$0.0001/msg"),
-    "deepseek":  ("deepseek/deepseek-chat",                  "DeepSeek V3",        "~$0.0003/msg"),
-    "qwen":      ("qwen/qwen-2.5-72b-instruct",              "Qwen 2.5 72B",       "~$0.0005/msg"),
-    "claude":    ("anthropic/claude-haiku-4-5",              "Claude Haiku 4.5",   "~$0.001/msg"),
-    "gpt4o":     ("openai/gpt-4o-mini",                      "GPT-4o mini",        "~$0.001/msg"),
-    "nemotron":  ("nvidia/llama-3.1-nemotron-70b-instruct",  "Nemotron 70B",       "~$0.001/msg"),
-    "llama":     ("meta-llama/llama-3.3-70b-instruct",       "Llama 3.3 70B",      "~$0.0003/msg"),
-    "mistral":   ("mistralai/mistral-large",                 "Mistral Large",      "~$0.002/msg"),
+CLOUD_MODELS: dict[str, tuple[str, str]] = {
+    "gemini":   ("google/gemini-flash-1.5",                "Gemini Flash 1.5"),
+    "deepseek": ("deepseek/deepseek-chat",                 "DeepSeek V3"),
+    "qwen":     ("qwen/qwen-2.5-72b-instruct",             "Qwen 2.5 72B"),
+    "llama":    ("meta-llama/llama-3.3-70b-instruct",      "Llama 3.3 70B"),
+    "claude":   ("anthropic/claude-haiku-4-5",             "Claude Haiku 4.5"),
+    "gpt4o":    ("openai/gpt-4o-mini",                     "GPT-4o mini"),
+    "nemotron": ("nvidia/llama-3.1-nemotron-70b-instruct", "Nemotron 70B"),
+    "mistral":  ("mistralai/mistral-large",                "Mistral Large"),
 }
+
+SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md", ".docx", ".csv", ".json"}
 
 histories:    dict[int, list[dict]] = {}
 active_model: dict[int, str]        = {}
@@ -72,13 +75,16 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     histories[chat_id] = []
     active_model[chat_id] = "local"
     cloud_status = "✅ Cloud models available" if OPENROUTER_API_KEY else "❌ No OpenRouter key — local only"
+    kb_status    = "✅ Knowledge base connected" if ANYTHINGLLM_API_KEY else "❌ No AnythingLLM key — file upload disabled"
 
     await update.message.reply_text(
         "🤖 *Hermes is ready.*\n\n"
-        f"Current model: `local` (Hermes on VPS)\n"
-        f"{cloud_status}\n\n"
-        "Send me anything to chat.\n\n"
+        f"Model: `local` (Hermes on VPS)\n"
+        f"{cloud_status}\n"
+        f"{kb_status}\n\n"
+        "Send me anything to chat, or send a file to add it to your knowledge base.\n\n"
         "/model — Switch AI model\n"
+        "/kb — Knowledge base status\n"
         "/reset — Clear conversation history\n"
         "/help — Show this message",
         parse_mode="Markdown"
@@ -113,6 +119,47 @@ async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         reply_markup=model_keyboard(current)
     )
 
+async def cmd_kb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if not allowed(chat_id):
+        return
+
+    if not ANYTHINGLLM_API_KEY:
+        await update.message.reply_text(
+            "⚠️ Knowledge base not configured.\n\n"
+            "1. Go to AnythingLLM → Settings → API Keys → Generate\n"
+            "2. Add to your VPS:\n"
+            "`echo 'ANYTHINGLLM_API_KEY=<key>' >> /opt/kbai/.env`\n"
+            "3. Restart: `docker compose up -d --force-recreate telegram-bot`",
+            parse_mode="Markdown"
+        )
+        return
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            headers = {"Authorization": f"Bearer {ANYTHINGLLM_API_KEY}"}
+            ws_resp = await client.get(f"{ANYTHINGLLM_URL}/api/v1/workspaces", headers=headers)
+            ws_resp.raise_for_status()
+            workspaces = ws_resp.json().get("workspaces", [])
+
+        if not workspaces:
+            await update.message.reply_text(
+                "📚 Knowledge base connected but no workspaces found.\n\n"
+                "Create a workspace in AnythingLLM first, then send files here."
+            )
+            return
+
+        lines = ["📚 *Knowledge Base*\n"]
+        for ws in workspaces:
+            doc_count = len(ws.get("documents", []))
+            lines.append(f"• *{ws['name']}* — {doc_count} document(s)")
+        lines.append("\nSend any PDF, TXT, DOCX, MD, or CSV file to add it.")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"KB status error: {e}")
+        await update.message.reply_text(f"⚠️ Could not reach AnythingLLM: {e}")
+
 async def callback_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -125,10 +172,7 @@ async def callback_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     active_model[chat_id] = model_key
     histories[chat_id] = []
 
-    if model_key == "local":
-        name = "Local Hermes (private)"
-    else:
-        name = CLOUD_MODELS[model_key][1]
+    name = "Local Hermes (private)" if model_key == "local" else CLOUD_MODELS[model_key][1]
 
     await query.edit_message_text(
         f"✅ Switched to *{name}*. Conversation cleared.\n\n"
@@ -136,6 +180,85 @@ async def callback_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown",
         reply_markup=model_keyboard(model_key)
     )
+
+async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if not allowed(chat_id):
+        return
+
+    if not ANYTHINGLLM_API_KEY:
+        await update.message.reply_text(
+            "⚠️ Knowledge base not configured. See /kb for setup instructions."
+        )
+        return
+
+    doc = update.message.document
+    file_name = doc.file_name or "document"
+    ext = os.path.splitext(file_name)[1].lower()
+
+    if ext not in SUPPORTED_EXTENSIONS:
+        await update.message.reply_text(
+            f"⚠️ Unsupported file type `{ext}`.\n"
+            f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
+            parse_mode="Markdown"
+        )
+        return
+
+    msg = await update.message.reply_text(f"📥 Uploading *{file_name}* to knowledge base...", parse_mode="Markdown")
+
+    try:
+        tg_file   = await ctx.bot.get_file(doc.file_id)
+        file_bytes = await tg_file.download_as_bytearray()
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            headers = {"Authorization": f"Bearer {ANYTHINGLLM_API_KEY}"}
+
+            upload_resp = await client.post(
+                f"{ANYTHINGLLM_URL}/api/v1/document/upload",
+                headers=headers,
+                files={"file": (file_name, bytes(file_bytes), "application/octet-stream")}
+            )
+            upload_resp.raise_for_status()
+            upload_data = upload_resp.json()
+
+            if not upload_data.get("success"):
+                raise Exception(upload_data.get("error", "Upload failed"))
+
+            doc_location = upload_data["documents"][0]["location"]
+
+            ws_resp = await client.get(f"{ANYTHINGLLM_URL}/api/v1/workspaces", headers=headers)
+            ws_resp.raise_for_status()
+            workspaces = ws_resp.json().get("workspaces", [])
+
+            if not workspaces:
+                await msg.edit_text(
+                    f"✅ *{file_name}* uploaded.\n\n"
+                    "⚠️ No workspace found — create one in AnythingLLM to start querying it.",
+                    parse_mode="Markdown"
+                )
+                return
+
+            slug    = workspaces[0]["slug"]
+            ws_name = workspaces[0]["name"]
+
+            embed_resp = await client.post(
+                f"{ANYTHINGLLM_URL}/api/v1/workspace/{slug}/update-embeddings",
+                headers=headers,
+                json={"adds": [doc_location], "deletes": []}
+            )
+            embed_resp.raise_for_status()
+
+        await msg.edit_text(
+            f"✅ *{file_name}* added to knowledge base\n"
+            f"Workspace: _{ws_name}_\n\n"
+            "You can now query it in AnythingLLM.",
+            parse_mode="Markdown"
+        )
+        logger.info(f"KB upload: {file_name} → {ws_name} ({slug})")
+
+    except Exception as e:
+        logger.error(f"KB upload error: {e}")
+        await msg.edit_text(f"⚠️ Upload failed: {e}")
 
 async def call_ollama(messages: list[dict]) -> str:
     async with httpx.AsyncClient(timeout=180.0) as client:
@@ -195,6 +318,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 def main():
     logger.info(f"Starting Hermes Telegram bot (local: {LOCAL_MODEL})")
     logger.info(f"OpenRouter: {'configured' if OPENROUTER_API_KEY else 'not configured'}")
+    logger.info(f"AnythingLLM KB: {'configured' if ANYTHINGLLM_API_KEY else 'not configured'}")
     logger.info(f"Access: {'chat_id=' + ALLOWED_ID if ALLOWED_ID else 'OPEN'}")
 
     app = Application.builder().token(TOKEN).build()
@@ -202,7 +326,9 @@ def main():
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("help",  cmd_help))
     app.add_handler(CommandHandler("model", cmd_model))
+    app.add_handler(CommandHandler("kb",    cmd_kb))
     app.add_handler(CallbackQueryHandler(callback_model, pattern="^model:"))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.run_polling(drop_pending_updates=True)
 

@@ -53,6 +53,8 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_ALLOWED_CHAT_ID=${TELEGRAM_ALLOWED_CHAT_ID:-}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - ANYTHINGLLM_URL=http://kbai-anythingllm:3001
+      - ANYTHINGLLM_API_KEY=${ANYTHINGLLM_API_KEY:-}
       - OLLAMA_BASE_URL=http://kbai-ollama:11434
       - OLLAMA_MODEL=hf.co/NousResearch/Hermes-3-Llama-3.1-8B-GGUF:Q4_K_M
       - SYSTEM_PROMPT=You are Hermes, a knowledgeable and direct AI assistant. Answer concisely. Use markdown formatting when helpful.
