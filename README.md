@@ -1,9 +1,9 @@
 # KBAI — Self-hosted Knowledge Base AI
 
 A fully self-hosted, open-source AI stack for your personal knowledge base.
-Run the **Hermes-3-Llama-3.1-8B** language model on your own VPS with a chat interface,
-a RAG engine that can search your Obsidian notes and PDFs, and a protected REST API —
-no cloud subscriptions required, no data leaving your server.
+Run powerful language models on your own VPS with a chat interface, a RAG engine
+that searches your notes and PDFs, a Telegram bot with multi-model routing, and
+a protected REST API — no cloud subscriptions required, no data leaving your server.
 
 ---
 
@@ -14,31 +14,36 @@ no cloud subscriptions required, no data leaving your server.
 | **Ollama** | Serves the Hermes LLM locally | Internal only |
 | **Open WebUI** | Chat UI for the Hermes model | `http://your-ip/` |
 | **AnythingLLM** | RAG — chat with your notes & PDFs | `http://your-ip:3002/` |
-| **Nginx** | Reverse proxy + Bearer token API auth | Port 80 |
+| **Telegram Bot** | Private AI assistant with model routing + file upload | Telegram |
+| **Nginx** | Reverse proxy + Bearer token API auth | Port 80 / 3002 |
 | **systemd** | Auto-start all services on boot | — |
 
-**Model:** [NousResearch Hermes-3-Llama-3.1-8B](https://huggingface.co/NousResearch/Hermes-3-Llama-3.1-8B) — Q4_K_M quantization (~5.5 GB, runs on CPU)
+**Default model:** [NousResearch Hermes-3-Llama-3.1-8B](https://huggingface.co/NousResearch/Hermes-3-Llama-3.1-8B) — Q4_K_M quantization (~5.5 GB, runs on CPU)
 
 ---
 
 ## Architecture
 
 ```
-                        ┌─────────────────────────────────┐
-                        │         YOUR VPS                 │
-                        │                                  │
-  Browser / API  ──────▶│  Nginx (port 80)                │
-                        │   ├── /         → Open WebUI    │
-                        │   └── /ollama/  → Ollama API    │
-                        │                                  │
-  Browser        ──────▶│  Nginx (port 3002)              │
-                        │   └── /        → AnythingLLM   │
-                        │                                  │
-                        │  Docker Compose                  │
-                        │   ├── kbai-ollama      :11434   │
-                        │   ├── kbai-open-webui  :3001    │
-                        │   └── kbai-anythingllm :8081    │
-                        └─────────────────────────────────┘
+                        ┌──────────────────────────────────────┐
+                        │              YOUR VPS                 │
+                        │                                       │
+  Browser / API  ──────▶│  Nginx (port 80)                     │
+                        │   ├── /         → Open WebUI         │
+                        │   └── /ollama/  → Ollama API         │
+                        │                                       │
+  Browser        ──────▶│  Nginx (port 3002) → AnythingLLM    │
+                        │                                       │
+  Telegram       ──────▶│  Telegram Bot                        │
+                        │   ├── Local Hermes (Ollama)           │
+                        │   └── Cloud models (OpenRouter)       │
+                        │                                       │
+                        │  Docker Compose                       │
+                        │   ├── kbai-ollama        :11434      │
+                        │   ├── kbai-open-webui    :3001       │
+                        │   ├── kbai-anythingllm   :8081       │
+                        │   └── kbai-telegram-bot             │
+                        └──────────────────────────────────────┘
 ```
 
 ---
@@ -73,7 +78,7 @@ The script will:
 2. Fix any broken dpkg state
 3. Install Docker, Nginx, and all dependencies
 4. Generate random API keys and secrets
-5. Pull and start Ollama + Open WebUI + AnythingLLM
+5. Pull and start all containers
 6. Configure Nginx reverse proxy with Bearer token auth
 7. Enable auto-start on boot via systemd
 8. Download the Hermes-3-Llama-3.1-8B model (~5.5 GB)
@@ -82,85 +87,61 @@ The script will:
 
 ---
 
-## Manual Install (fallback)
+## Telegram Bot
 
-Use this if the setup script fails partway through.
+A private Telegram bot that connects to your AI stack. Features:
 
-### 1. Fix broken packages (if needed)
+- **Multi-model routing** — switch between local Hermes and 8 cloud models with one tap
+- **File-to-knowledge-base** — send any PDF, TXT, DOCX, MD, or CSV and it's automatically embedded into AnythingLLM
+- **Conversation memory** — per-chat history with `/reset` to clear
+- **Private mode** — locked to your Telegram chat ID only
 
-```bash
-apt-get install -y --fix-broken
-dpkg --configure -a
+### Supported Models
+
+| Model | Provider | Cost |
+|---|---|---|
+| Hermes 8B | Local VPS | Free (already paid) |
+| Gemini Flash 1.5 | OpenRouter | ~$0.0001/msg |
+| DeepSeek V3 | OpenRouter | ~$0.0003/msg |
+| Qwen 2.5 72B | OpenRouter | ~$0.0005/msg |
+| Llama 3.3 70B | OpenRouter | ~$0.0003/msg |
+| Claude Haiku 4.5 | OpenRouter | ~$0.001/msg |
+| GPT-4o mini | OpenRouter | ~$0.001/msg |
+| Nemotron 70B | OpenRouter | ~$0.001/msg |
+| Mistral Large | OpenRouter | ~$0.002/msg |
+
+### Bot Setup
+
+1. Create a bot with [@BotFather](https://t.me/botfather) on Telegram — get a token
+2. Get a free [OpenRouter](https://openrouter.ai) API key (optional, for cloud models)
+3. Get an AnythingLLM API key: AnythingLLM → Settings → API Keys → Generate
+4. Add to `/opt/kbai/.env` on your VPS:
+
+```env
+TELEGRAM_BOT_TOKEN=your-bot-token
+OPENROUTER_API_KEY=your-openrouter-key
+ANYTHINGLLM_API_KEY=your-anythingllm-key
 ```
 
-### 2. Add 4 GB swap
+5. Build and start:
 
 ```bash
-fallocate -l 4G /swapfile
-chmod 600 /swapfile
-mkswap /swapfile
-swapon /swapfile
-echo '/swapfile none swap sw 0 0' >> /etc/fstab
+cd /opt/kbai && docker compose up -d --build telegram-bot
 ```
 
-### 3. Install base packages
+6. Send `/start` to your bot — it will reply with your chat ID
+7. Add `TELEGRAM_ALLOWED_CHAT_ID=<your-id>` to `.env` and restart to lock it down
 
-```bash
-apt-get update
-apt-get install -y ca-certificates curl gnupg lsb-release nginx gettext-base openssl git
-```
+### Bot Commands
 
-### 4. Install Docker
-
-```bash
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-  | tee /etc/apt/sources.list.d/docker.list
-apt-get update
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-systemctl enable --now docker
-```
-
-### 5. Start the stack
-
-```bash
-cd /opt/kbai
-
-# Generate secrets
-WEBUI_SECRET=$(openssl rand -hex 32)
-API_KEY=$(openssl rand -hex 24)
-DOMAIN=your-ip-or-domain
-
-# Write .env
-cat > /opt/kbai/.env <<EOF
-DOMAIN=$DOMAIN
-WEBUI_SECRET_KEY=$WEBUI_SECRET
-HERMES_API_KEY=$API_KEY
-EOF
-
-# Nginx
-echo 'map_hash_bucket_size 128;' > /etc/nginx/conf.d/map-hash.conf
-export DOMAIN HERMES_API_KEY=$API_KEY
-envsubst '${DOMAIN} ${HERMES_API_KEY}' < nginx/kbai-hermes.conf.template \
-  > /etc/nginx/sites-available/kbai-hermes
-envsubst '${DOMAIN}' < nginx/kbai-anythingllm.conf.template \
-  > /etc/nginx/sites-available/kbai-anythingllm
-ln -sf /etc/nginx/sites-available/kbai-hermes /etc/nginx/sites-enabled/kbai-hermes
-ln -sf /etc/nginx/sites-available/kbai-anythingllm /etc/nginx/sites-enabled/kbai-anythingllm
-rm -f /etc/nginx/sites-enabled/default
-nginx -t && systemctl start nginx && systemctl enable nginx
-
-# Start containers
-docker compose up -d
-
-# Wait and pull models
-sleep 20
-docker exec kbai-ollama ollama pull hf.co/NousResearch/Hermes-3-Llama-3.1-8B-GGUF:Q4_K_M
-docker exec kbai-ollama ollama pull nomic-embed-text
-```
+| Command | Action |
+|---|---|
+| `/start` | Show status and setup info |
+| `/model` | Open model switcher (inline tap buttons) |
+| `/kb` | Show knowledge base status and document count |
+| `/reset` | Clear conversation history |
+| `/help` | Show help |
+| Send a file | Upload PDF/TXT/DOCX/MD/CSV to knowledge base |
 
 ---
 
@@ -176,17 +157,10 @@ docker exec kbai-ollama ollama pull nomic-embed-text
 
 1. Open `http://your-ip:3002/`
 2. Create your admin account
-3. Go to **Settings → LLM Provider**:
-   - Provider: `Ollama`
-   - Base URL: `http://kbai-ollama:11434`
-   - Model: `hf.co/NousResearch/Hermes-3-Llama-3.1-8B-GGUF:Q4_K_M`
-4. Go to **Settings → Embedding**:
-   - Provider: `Ollama`
-   - Base URL: `http://kbai-ollama:11434`
-   - Model: `nomic-embed-text`
-5. Create **Workspaces** for each domain (e.g. `AI Research`, `Crypto`, `Creative Writing`)
-6. Upload your PDFs, Markdown notes, and documents into each workspace
-7. Chat with your documents — AnythingLLM retrieves relevant context using RAG
+3. LLM and embedding are pre-configured via environment variables — no manual setup needed
+4. Create **Workspaces** for each domain (e.g. `Research`, `Notes`, `Projects`)
+5. Upload your PDFs and Markdown notes, or send files via the Telegram bot
+6. Chat with your documents — AnythingLLM retrieves relevant context using RAG
 
 ---
 
@@ -227,23 +201,13 @@ curl http://your-domain/ollama/api/chat \
   }'
 ```
 
-### List models
-
-```bash
-curl http://your-domain/ollama/api/tags \
-  -H "Authorization: Bearer YOUR_API_KEY"
-```
-
 ---
 
 ## Pulling Additional Models
 
 ```bash
-# Pull any model from Ollama library or HuggingFace
 docker exec kbai-ollama ollama pull mistral
 docker exec kbai-ollama ollama pull llama3.2
-
-# List all loaded models
 docker exec kbai-ollama ollama list
 ```
 
@@ -258,53 +222,25 @@ apt-get install -y certbot python3-certbot-nginx
 certbot --nginx -d your-domain.com
 ```
 
-Certbot automatically configures Nginx and sets up auto-renewal.
-
 ---
 
 ## Service Management
 
 ```bash
-# Status of all containers
+# Status
 docker ps
 
 # Restart everything
 systemctl restart kbai-hermes
 
-# Stop / start
-systemctl stop kbai-hermes
-systemctl start kbai-hermes
-
-# View logs
+# Logs
 docker logs kbai-ollama
 docker logs kbai-open-webui
 docker logs kbai-anythingllm
+docker logs kbai-telegram-bot
 
-# Rebuild and restart a single service
-cd /opt/kbai && docker compose up -d --force-recreate open-webui
-```
-
----
-
-## GPU Support (NVIDIA)
-
-The setup script auto-detects an NVIDIA GPU. To add GPU support after initial install:
-
-```bash
-# Install NVIDIA Container Toolkit
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor \
-  -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-  | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-apt-get update && apt-get install -y nvidia-container-toolkit
-nvidia-ctk runtime configure --runtime=docker
-systemctl restart docker
-
-# Restart Ollama with GPU support
-cd /opt/kbai
-docker compose down
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# Rebuild a single service
+cd /opt/kbai && docker compose up -d --build --force-recreate telegram-bot
 ```
 
 ---
@@ -312,18 +248,21 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 ## File Structure
 
 ```
-├── docker-compose.yml               # Ollama + Open WebUI + AnythingLLM
-├── docker-compose.gpu.yml           # NVIDIA GPU override
-├── .env.example                     # Environment template (copy → .env)
+├── docker-compose.yml                   # All services
+├── .env.example                         # Environment template (copy → .env)
 ├── nginx/
-│   ├── kbai-hermes.conf.template    # Proxy config: Open WebUI + Ollama API
-│   └── kbai-anythingllm.conf.template  # Proxy config: AnythingLLM on :3002
+│   ├── kbai-hermes.conf.template        # Proxy: Open WebUI + Ollama API
+│   └── kbai-anythingllm.conf.template   # Proxy: AnythingLLM on :3002
+├── telegram-bot/
+│   ├── bot.py                           # Telegram bot
+│   ├── Dockerfile
+│   └── requirements.txt
 ├── systemd/
-│   └── kbai-hermes.service          # Systemd unit for auto-start
+│   └── kbai-hermes.service              # Auto-start on boot
 └── scripts/
-    ├── setup.sh                     # Main installer
-    ├── install.sh                   # Bootstrap (downloads setup.sh)
-    └── pull-model.sh                # Pull Hermes model into Ollama
+    ├── setup.sh                         # Main installer
+    ├── install.sh                       # Bootstrap
+    └── pull-model.sh                    # Pull Hermes into Ollama
 ```
 
 ---
@@ -331,25 +270,22 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 ## Troubleshooting
 
 **apt-get gets killed (OOM) during install**
-Add swap before running setup — see step 2 of manual install above. 8 GB RAM with no swap is not enough to install Docker packages.
-
-**`dpkg --configure -a` fails with dependency errors**
-Run `apt-get install -y --fix-broken` first, then retry.
-
-**Nginx fails with `map_hash_bucket_size` error**
-Ensure `/etc/nginx/conf.d/map-hash.conf` exists: `echo 'map_hash_bucket_size 128;' > /etc/nginx/conf.d/map-hash.conf`
+Add swap before running setup — the Q4_K_M model needs ~5.5 GB RAM and install tools need headroom.
 
 **Open WebUI shows "Backend Required" error**
-This happens when Nginx routes `/api/` to Ollama instead of Open WebUI. The current config routes `/ollama/` to Ollama and all other traffic to Open WebUI — this is correct. If you see this error, check that your Nginx config matches `nginx/kbai-hermes.conf.template`.
-
-**Ollama not responding**
-Check container logs: `docker logs kbai-ollama`. It may still be initializing — wait 30 seconds and retry.
+Nginx is routing `/api/` to Ollama instead of Open WebUI. The correct config routes `/ollama/` to Ollama. Check your nginx site config matches `nginx/kbai-hermes.conf.template`.
 
 **AnythingLLM can't connect to Ollama**
-Use `http://kbai-ollama:11434` as the base URL inside AnythingLLM settings (not localhost — they communicate over the Docker internal network).
+Use `http://kbai-ollama:11434` as the base URL — not `localhost`. Services communicate over the Docker internal network.
 
-**Model pull fails / runs out of disk**
-Check disk space: `df -h`. The Hermes model needs ~6 GB free. The embedding model (`nomic-embed-text`) needs an additional ~270 MB.
+**Telegram bot not responding**
+Check it's running: `docker ps | grep telegram`. View logs: `docker logs kbai-telegram-bot --tail 30`.
+
+**File upload to knowledge base fails**
+Ensure `ANYTHINGLLM_API_KEY` is set in `.env` and at least one workspace exists in AnythingLLM. Check logs: `docker logs kbai-telegram-bot --tail 20`.
 
 **Port 3002 not reachable**
-Check nginx is listening: `ss -tlnp | grep 3002`. If not, verify `/etc/nginx/sites-enabled/kbai-anythingllm` exists and reload nginx.
+Check UFW: `ufw status`. If active, run: `ufw allow 3002/tcp && ufw reload`.
+
+**Model pull fails / runs out of disk**
+Check disk space: `df -h`. Hermes needs ~6 GB, nomic-embed-text needs ~270 MB.
