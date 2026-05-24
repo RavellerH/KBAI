@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KBAI — Knowledge Base AI</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d0d0d;
+      color: #e0e0e0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 48px;
+      padding: 24px;
+    }
+    .title { text-align: center; }
+    .title h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: #fff;
+    }
+    .title p {
+      margin-top: 8px;
+      font-size: 0.95rem;
+      color: #666;
+    }
+    .cards {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .card {
+      background: #181818;
+      border: 1px solid #2a2a2a;
+      border-radius: 12px;
+      padding: 28px 32px;
+      width: 240px;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.2s, transform 0.2s;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .card:hover { border-color: #555; transform: translateY(-2px); }
+    .card-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #555;
+    }
+    .card-title { font-size: 1.15rem; font-weight: 600; color: #fff; }
+    .card-desc { font-size: 0.85rem; color: #666; line-height: 1.5; }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #2ecc71; display: inline-block;
+      margin-right: 6px; animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    footer { font-size: 0.75rem; color: #333; }
+  </style>
+</head>
+<body>
+  <div class="title">
+    <h1>KBAI</h1>
+    <p>Self-hosted Knowledge Base AI</p>
+  </div>
+  <div class="cards">
+    <a class="card" href="chat/">
+      <span class="card-label"><span class="dot"></span>Live</span>
+      <span class="card-title">Hermes Chat</span>
+      <span class="card-desc">Chat with Hermes-3-Llama-3.1-8B running on your VPS.</span>
+    </a>
+    <a class="card" href="rag/">
+      <span class="card-label"><span class="dot"></span>Live</span>
+      <span class="card-title">Knowledge Base</span>
+      <span class="card-desc">RAG search over your notes, PDFs and documents.</span>
+    </a>
+  </div>
+  <footer>Powered by Ollama · Open WebUI · AnythingLLM</footer>
+</body>
+</html>
